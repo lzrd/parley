@@ -17,8 +17,8 @@ Jeweler::Tasks.new do |gem|
   gem.name = "parley"
   gem.homepage = "http://github.com/lzrd/parley"
   gem.license = "MIT"
-  gem.summary = %Q{TODO: one-line summary of your gem}
-  gem.description = %Q{TODO: longer description of your gem}
+  gem.summary = %Q{An expect-like gem, modeled after Perl's Expect.pm}
+  gem.description = %Q{An expect-like gem, modeled after Perl's Expect.pm}
   gem.email = "stoltz@lzrd.com"
   gem.authors = ["Ben Stoltz"]
   # dependencies defined in Gemfile
