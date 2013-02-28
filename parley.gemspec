@@ -5,24 +5,22 @@
 
 Gem::Specification.new do |s|
   s.name = "parley"
-  s.version = "0.1.0"
+  s.version = "0.2.0"
 
   s.required_rubygems_version = Gem::Requirement.new(">= 0") if s.respond_to? :required_rubygems_version=
   s.authors = ["Ben Stoltz"]
-  s.date = "2013-02-15"
+  s.date = "2013-02-28"
   s.description = "An expect-like gem, modeled after Perl's Expect.pm"
   s.email = "stoltz@lzrd.com"
   s.extra_rdoc_files = [
     "LICENSE.txt",
-    "README.md",
-    "README.rdoc"
+    "README.md"
   ]
   s.files = [
     ".document",
     "Gemfile",
     "LICENSE.txt",
     "README.md",
-    "README.rdoc",
     "Rakefile",
     "VERSION",
     "lib/parley.rb",
@@ -33,7 +31,7 @@ Gem::Specification.new do |s|
   s.homepage = "http://github.com/lzrd/parley"
   s.licenses = ["MIT"]
   s.require_paths = ["lib"]
-  s.rubygems_version = "1.8.24"
+  s.rubygems_version = "1.8.25"
   s.summary = "An expect-like gem, modeled after Perl's Expect.pm"
 
   if s.respond_to? :specification_version then
