@@ -1,130 +1,143 @@
-#!/usr/bin/ruby
-#
-# = parley.rb - An expect library for Ruby modled after Perl's Expect.pm
-#
+
 require 'pty'
 
-# TODO: line oriented reading option
-# Greediness control
 module Parley
-  # VERSION = '0.1.0'
-
+  # Internal: used to set input data that has been received, but not yet matched
+  #--
   # Initialize() is usually not called or doesn't call super(), so
   # do implicit instance variable initialization
+  #++
   def unused_buf= (v)
     @unused_buf = v
   end
 
+  # holds the remaining input read from +read_nonblock()+ or +getc()+ but not yet used
   def unused_buf
     @unused_buf = nil unless defined? @unused_buf
     @unused_buf
   end
 
-  def parley_verbose= (v)
-    @parley_verbose = (v ? true : false)
+  # Sets/clears verbose mode to aid debugging.
+  #
+  # Debug output is sent to +STDOUT+ unless overridden by +pvout+
+  def parley_verbose= (truth, pvout = STDOUT)
+    @pvout = pvout
+    @parley_verbose = (truth ? true : false)
   end
 
+  # returns +true+ if debug output is enabled, else +false+
   def parley_verbose
     @parley_verbose = false unless defined? @parley_verbose
     @parley_verbose
   end
 
-  def parley_maxread= (v)
-    @parley_maxread = (v > 0) ? v : 1
+  # sets the maximum number of characters to read from +read_nonblock()+
+  def parley_maxread= (max_characters = 1)
+    @parley_maxread = (max_characters > 0) ? max_characters : 1
   end
 
+  # return the maximum number of characters to read from +read_nonblock()+
   def parley_maxread
     @parley_maxread = 1 unless defined? @parley_maxread
     @parley_maxread
   end
 
-  def parley (t_out, *actions)
-    # t_out = nil; # wait forever for next data
-    # t_out = 0; # timeout immediately if no data available
-    # t_out > 0; # timeout after t_out seconds
-    # t_out < 0; # deadline is in the past, same as t_out = 0
-    STDOUT.print "\n------\nparley t_out=#{t_out}\n" if parley_verbose
-    if (t_out == nil)
+  # Match patterns and conditions and take corresponding actions until an action
+  # returns a value not equal to +:continue+ or +:reset_timeout+
+  #
+  # +timeout_seconds+ specifies the amount of time before the +:timeout+ condition
+  # is presented to the pattern/action list.
+  #
+  # If +timeout_seconds+ is less than or equal to zero, then +:timeout+
+  # immediately as soon as there is no more data available.
+  #
+  # XXX bad. output could spew forever and we want to stop by deadline.
+  #
+  # If +timeout_seconds+ is nil, then no +:timeout+ condition will be generated.
+  #
+  # A action returning the value +:reset_timeout+ will +:continue+ and reset
+  # the timeout deadline to a value of +Time.now+ + +timeout_seconds+
+  def parley (timeout_seconds, *actions)
+    @pvout.print "parley,#{__LINE__}: timeout_seconds=#{timeout_seconds}\n" if parley_verbose
+    if (timeout_seconds == nil)
       deadline = nil
     else
-      deadline = Time.now + t_out
+      deadline = Time.now + timeout_seconds
     end
     buf = ''
     unused_buf = '' if not unused_buf
 
-    loop_count = 0
-
-    # STDOUT.puts "class=#{self.class}"
-
-    # Compatible hack. There are changes coming w.r.t. respond_to? for
+    # XXX Compatible hack. There are changes coming w.r.t. respond_to? for
     # protected methods. Just do a simple poll, and see if it works.
     begin
       result = IO.select([self], [], [], 0)
       has_select = true;
     rescue Exception
       has_select = false;
-      # STDOUT.puts "Exception: #{Exception}"
     end
-    # STDOUT.puts "has_select=#{has_select}"
 
     begin
-      loop_count = loop_count + 1
       # If it is possible to wait for data, then wait for data
       t = (deadline ? (deadline - Time.now) : nil)
       t = (t.nil? || t >= 0) ? t : 0
+      # XXX If maxlen > unused_buf.length, then try to get more input?
+      #     Think about above. don't want to use up all of timeout.
       if unused_buf.length == 0 && has_select && !IO.select([self], nil, nil, t)
-        # Timeout condition returns nil
-        STDOUT.print "TIMEOUT=\"#{buf}\"\n" if parley_verbose
+        # Timeout condition from IO.select() returns nil
+        @pvout.print "parley,#{__LINE__}: TIMEOUT buf=\"#{buf}\"\n" if parley_verbose
         timeout_handled = nil
         result = nil
-        result = actions.each do|act|
-          case act[0]
-          when :timeout
+        result = actions.find do|pattern, action|
+          if pattern == :timeout
             timeout_handled = true
-            if act[1].respond_to?(:call)
-              /.*/.match(buf) # get the buffer contents into a Regexp.last_match
-              result = act[1].call(Regexp.last_match)
+            if action.respond_to?(:call)
+              r = action.call(/.*/.match(buf)) # call with entire buffer as a MatchData
             else
-              result = act[1]
+              r = action
             end
-            break result
+            @pvout.print "parley,#{__LINE__}: TIMEOUT Handled=\"#{r}\"\n" if parley_verbose
+            break r
+          else
+            nil
           end
         end
+        @pvout.print "parley,#{__LINE__}: TIMEOUT RESULT=\"#{result}\"\n" if parley_verbose
         if (!timeout_handled)
           # XXX need to prepend buf to @unusedbuf
           unused_buf = buf  # save data for next time
-          raise "timeout" # XXX use TimeoutException
+          raise "timeout"
         end
-        STDOUT.print "TIMEOUT RESULT=\"#{result}\"\n" if parley_verbose
         return result unless result == :reset_timeout
+        matched = true
       else
 
         # We've waited, if that was possible, check for data present
         if unused_buf.length == 0 && eof?
-          STDOUT.print "EOF Buffer=\"#{buf}\"\n" if parley_verbose
-          result = nil
+          @pvout.print "parley,#{__LINE__}: EOF Buffer=\"#{buf}\"\n" if parley_verbose
           eof_handled = false
-          actions.each do |act|
-            case act[0]
+          result = actions.find do |pattern, action|
+            case pattern
             when :eof
               eof_handled = true
-              if act[1].respond_to?(:call)
-                /.*/m.match(buf)  # Game end, match everything remaining
-                result = act[1].call(Regexp.last_match)
+              if action.respond_to?(:call)
+                result = action.call(/.*/m.match(buf))
               else
-                result = act[1]
+                result = action
               end
               break result
+            else
+              nil
             end
           end
-          if not eof_handled
+          unless eof_handled
             # XXX need to prepend buf to @unusedbuf
             unused_buf = buf  # save data for next time
-            raise :eof if not eof_handled
+            raise "End of file"
           end
           return result
         end
 
+        # No timeout and no EOF. There is some input data to look at
         # Greedy read:
         # buf << self.read_nonblock(maxlen)
         if (unused_buf.length > 0)
@@ -140,18 +153,18 @@ module Parley
         result = :continue
         matched = false
         result = actions.each_with_index do |act,i|
-          # STDOUT.print "buf=\"#{buf}\"\tact=#{act[0]}\n" if parley_verbose
+          # @pvout.print "parley,#{__LINE__}: buf=\"#{buf}\"\tact=#{act[0]}\n" if parley_verbose
           m = case act[0]
               when Regexp
-                act[0].match(buf) and Regexp.last_match
+                act[0].match(buf)
               when String
-                act[0] = Regexp.new(act[0]) # caching the regexp conversion, XXX any problem?
-                act[0].match(buf) and Regexp.last_match
+                act[0] = Regexp.new(act[0]) # caching the regexp conversion
+                act[0].match(buf)
               else
                 nil
               end
           if m
-            STDOUT.print "match[#{i}]=\"#{buf}\"\n" if parley_verbose
+            @pvout.print "parley,#{__LINE__}: match[#{i}]=\"#{buf}\"\n" if parley_verbose
             matched = true
             if act[1]
               if act[1].respond_to?(:call)
@@ -164,7 +177,7 @@ module Parley
             end
             buf = ''  # consume the buffer (XXX only the part that matched?)
             # XXX if the regex had post context, don't consume that.
-            STDOUT.puts "result=#{result}" if parley_verbose
+            @pvout.puts "parley,#{__LINE__}: result=#{result}" if parley_verbose
             break result
           end
           result
@@ -172,25 +185,28 @@ module Parley
       end
 
       if matched == true
+        @pvout.puts "parley,#{__LINE__}: MATCH, result=#{result}" if parley_verbose
         result = case result
                  when :continue
                    :continue
                  when nil  # explicit end
                    break nil
                  when :reset_timeout
-                   deadline = Time.now + t_out # XXX vs deadline in lambda closure?
-                   STDOUT.puts "deadline=#{deadline.to_s}, continue" if parley_verbose
+                   deadline = Time.now + timeout_seconds # XXX vs deadline in lambda closure?
+                   @pvout.puts "parley,#{__LINE__}: deadline=#{deadline.to_s}, continue" if parley_verbose
                    :continue
                  else  # return with result
                    break result
                  end
       else
+        @pvout.puts "parley,#{__LINE__}: no match, implicit :continue, buf=#{buf}" if parley_verbose
         result = :continue
       end
     end while result == :continue
   end
 end
 
+# Including the Parley module will monkey-patch the IO class
 class IO
   include Parley
 end
