@@ -20,3 +20,7 @@ doc/
 
 # Other junk
 junk/
+examples/expect_*
+examples/*.txt
+examples/*unfinished*
+lib/*.enhanced
