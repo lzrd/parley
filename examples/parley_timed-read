@@ -1,0 +1,7 @@
+#!/usr/bin/env ruby -w
+# Ported from Don Libes' example for tcl expect: expect_timed-read
+# read a complete line from stdin
+# aborting after the number of seconds (given as an argument)
+require 'parley'
+
+STDIN.parley ARGV[0].to_i, [/^(.*)\n/, lambda{|m| puts m}], [:timeout, nil]

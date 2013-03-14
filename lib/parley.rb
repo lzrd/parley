@@ -1,6 +1,75 @@
 
 require 'pty'
 
+# The Parley module is generally used to wrestle with the informal, interactive, text-mode,
+# APIs of the world.
+#
+# Parley is an implementation of an expect-like API.  It is designed to
+# help port away from Perl Expect based applications.
+# Parley was chosen as a name as an alternative to the various "expect" like
+# names already in use by other implementations.
+#
+# The {definition of "parley"}[http://www.thefreedictionary.com/parley] used
+# here is: "A discussion or conference, especially one between enemies over
+# terms of truce or other matters."
+#
+# See {the original Expect site at NIST}[http://www.nist.gov/el/msid/expect.cfm] for
+# references to the original Expect language based on Tcl.
+#
+# See the {Perl Expect.pm module}[http://search.cpan.org/~rgiersig/Expect-1.21/Expect.pod].
+#
+# === Compatibility
+# Parley can be used with any class, like PTY, IO or
+# StringIO that responds_to?() :eof?, and either :read_nonblock(maxread) or :getc.
+#
+# If the class also responds to :select, ala IO##select, then Parley will be able to wait
+# for additional input to arrive.
+#
+# === Monkey Patching
+# require 'parley' will automatcially add parley() and support methods to the IO class
+#
+# Author::     Ben Stoltz (mailto:gem-parley@lzrd.com)
+# Copyright::  Copyright (c) 2013 Benjamin Stoltz
+# License::    See LICENSE.txt distributed with this file
+#
+# == Examples
+# === Standard ruby expect vs. equivalent parley usage
+# Standard Ruby expect:
+#   require 'expect'
+#
+#   ...
+#   input.expect(/pattern/, 10) {|matchdata| code}
+#
+# Parley:
+#   require 'parley'
+#
+#   ...
+#   input.parley(10, [/pattern/, lambda{|matchdata| code}])
+#
+# === Telnet login using /usr/bin/telnet
+#  require 'parley'
+#  input, output, process_id = PTY.spawn("/usr/bin/telnet localhost")
+#  output.puts '' # hit return to make sure we get some output
+#  result = input.parley(30,    # allow 30 seconds to login
+#    [ /ogin:/, lambda{|m| output.puts 'username'; :continue} ],
+#    [ /ssword:/, lambda{|m| output.puts 'my-secret-password'; :continue} ],
+#    [ /refused/i, "connection refused" ],
+#    [ :timeout, "timed out" ],
+#    [ :eof, "command output closed" ],
+#    [ /\$/, true ] # some string that only appears in the shell prompt
+#    ])
+#  if result == true
+#    puts "Successful login"
+#    output.puts "date" # This is the important command we had to run
+#  else
+#    puts "Login failed because: #{result}"
+#  end
+#  # We can keep running commands.
+#  input.close
+#  output.close
+#  id, exit_status = Process.wait2(process_id)
+#
+
 module Parley
   # Internal: used to set input data that has been received, but not yet matched
   #--
@@ -11,7 +80,8 @@ module Parley
     @unused_buf = v
   end
 
-  # holds the remaining input read from +read_nonblock()+ or +getc()+ but not yet used
+  # holds the remaining input read from +read_nonblock()+ or +getc()+ but not
+  # yet used
   def unused_buf
     @unused_buf = nil unless defined? @unused_buf
     @unused_buf
@@ -42,37 +112,56 @@ module Parley
     @parley_maxread
   end
 
-  # Match patterns and conditions and take corresponding actions until an action
-  # returns a value not equal to +:continue+ or +:reset_timeout+
+  # Collect data, from an IO-like object while matching
+  # match patterns and conditions (i.e. EOF and Timeout) and take corresponding
+  # actions until an action returns a value not equal to +:continue+ or
+  # +:reset_timeout+
   #
-  # +timeout_seconds+ specifies the amount of time before the +:timeout+ condition
-  # is presented to the pattern/action list.
+  # The parley() method is called with two arguments:
   #
-  # If +timeout_seconds+ is less than or equal to zero, then +:timeout+
-  # immediately as soon as there is no more data available.
+  # +timeout_seconds+ specifies the amount of time before the +:timeout+
+  # condition is presented to the pattern/action list.
   #
-  # XXX bad. output could spew forever and we want to stop by deadline.
+  # a variable number of arrays, each array contains a pattern and an action.
   #
-  # If +timeout_seconds+ is nil, then no +:timeout+ condition will be generated.
+  # * +timeout_seconds+ = nil disables timeout.
+  # * +timeout_seconds+ <= 0 times out immediately as soon as no data is present
+  # * +timeout_seconds+ > 0 times out seconds after parley was called unless
+  #   timer is reset by an action returning :reset_timeout
+  #
+  # A pattern is either:
+  # * a RegExp to match input data
+  # * the symbol :timeout to match the timeout condition from select()
+  # * the symbol :eof to match the eof?() condition
+  #
+  # If an action responds_to?(:call), such as a lambda{|m| code}
+  # then the action is called with MatchData as an argument.
+  # In the case of :timeout or :eof, MatchData is from matching:
+  #
+  #   input_buffer =~ /.*/
   #
   # A action returning the value +:reset_timeout+ will +:continue+ and reset
   # the timeout deadline to a value of +Time.now+ + +timeout_seconds+
+  #
   def parley (timeout_seconds, *actions)
-    @pvout.print "parley,#{__LINE__}: timeout_seconds=#{timeout_seconds}\n" if parley_verbose
-    if (timeout_seconds == nil)
+    @pvout.puts "parley: timeout_seconds=#{timeout_seconds}" if parley_verbose
+    case timeout_seconds
+    when NilClass
       deadline = nil
-    else
+    when Numeric
       deadline = Time.now + timeout_seconds
+    else
+      raise "Invalid timeout parameter: #{timeout_seconds.inspect}"
     end
     buf = ''
-    unused_buf = '' if not unused_buf
+    unused_buf ||= ''
 
     # XXX Compatible hack. There are changes coming w.r.t. respond_to? for
     # protected methods. Just do a simple poll, and see if it works.
     begin
       result = IO.select([self], [], [], 0)
       has_select = true;
-    rescue Exception
+    rescue Exception  # NoMethodError and ArgumentError are common
       has_select = false;
     end
 

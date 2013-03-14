@@ -29,11 +29,112 @@ class TestIO < Test::Unit::TestCase
     # no teardown required
   end
 
-  def test_timeout
+  def test_timeout_positive
     read, write, pid = PTY.spawn('/bin/sleep 20')
     result = read.parley(5, [:timeout, :timeout])
     assert(result == :timeout, "** ERROR result = #{result}")
   end
+
+  # Negative timeout behaves like zero since that time is already passed.
+  def test_negative_timeout
+    sleep_seconds = 5
+    read, write, pid = PTY.spawn("/bin/sleep #{sleep_seconds}")
+    start_time = Time.now
+    result = read.parley(-1, [:timeout, :timeout])
+    delta_t = Time.now - start_time
+    assert(result == :timeout, "** ERROR result = #{result}")
+    assert(delta_t < sleep_seconds/2,
+           "Immediate timeout did not happen: delta_t = #{delta_t}")
+  end
+
+  # Zero timeout results in immediate :timeout if no data available
+  def test_zero_timeout
+    sleep_seconds = 10
+    read, write, pid = PTY.spawn("/bin/sleep #{sleep_seconds}")
+    start_time = Time.now
+    result = read.parley(0, [:timeout, :timeout], [:eof, :eof])
+    end_time = Time.now
+    delta_t = (end_time - start_time)
+    assert(result == :timeout, "** ERROR result = #{result}")
+    assert(delta_t < (sleep_seconds/2.0),
+           "Test ended too late: delta_t(#{delta_t}) >= #{sleep_seconds/2.0}")
+  end
+
+=begin
+  # This syntax is not final or implemented yet
+  def test_multiple_spawned_commands
+    total = 0
+    count = 0
+
+    commands1 = []
+    (1..5).each do |i|
+      # push [read, write, pid] onto commands
+      commands1 << PTY.spawn("sleep 3; echo N=#{i}; sleep 2")
+    end
+    pattern_action_1 = [
+      /N=(\d+)/,          # find this pattern in output of all commands
+      lambda do |m, r, w|
+      total += m[1].to_i
+      count += 1
+      :continue;       # we don't want to terminate the expect call
+      end
+    ]
+
+    commands2 = []
+    (6..10).each do |i|
+      # push [read, write, pid] onto commands
+      commands2 << PTY.spawn("sleep 3; echo X=#{i}; sleep 2")
+    end
+    pattern_action_2 = [
+      /X=(\d+)/,          # find this pattern in output of all commands
+      lambda do |m, r, w|
+      total += m[1].to_i
+      count += 1
+      :continue;       # we don't want to terminate the expect call
+      end
+    ]
+
+    result = total / (count * 1.0)
+
+    sum = 0
+    (1..10).each do |i|
+      sum += i
+    end
+    avg = sum/10.0
+
+    parley_multiple(15,
+                    [commands1, pattern_action_1],
+                    [commands2, pattern_action_2])
+
+    assert(avg == result, "Error avg(#{avg}) != result(#{result}))")
+  end
+=end
+
+  def test_nil_timeout
+    sleep_seconds = 10
+    read, write, pid = PTY.spawn("/bin/sleep #{sleep_seconds}")
+    start_time = Time.now
+    result = read.parley(nil, [:timeout, :timeout], [:eof, :eof])
+    delta_t = Time.now - start_time
+    assert(result == :eof, "** ERROR result = #{result}")
+    assert(delta_t >= sleep_seconds - 1,
+           "Test ended too quickly: delta_t = #{delta_t}")
+  end
+
+=begin
+  # Alternate API, no timeout: parley([pattern, action], ...)
+  # timeout_seconds defaults to nil which means "no timeout"
+  def test_missing_timeout
+    sleep_seconds = 10
+    read, write, pid = PTY.spawn("/bin/sleep #{sleep_seconds}")
+    start_time = Time.now
+    result = read.parley([:timeout, :timeout], [:eof, :eof])
+    delta_t = Time.now - start_time
+    assert(result == :eof, "** ERROR result = #{result}")
+    assert(delta_t >= sleep_seconds - 1,
+           "Test ended too quickly: delta_t = #{delta_t}")
+  end
+=end
 
   def test_single_match
     sin = StringIO.new(@text)
@@ -44,6 +145,7 @@ class TestIO < Test::Unit::TestCase
                         [:eof, "very bad"])
     assert(result == "just apple", "Invalid result(#{result})")
   end
+
 
   def test_eof_constant
     io = File.new("/dev/null", "r")
@@ -307,15 +409,15 @@ class TestIO < Test::Unit::TestCase
         [
           :timeout,
           lambda do |m|
-            sin.puts ""
-            @n_to_reset += 1
-            puts "Resetting timeout #{@n_to_reset}"
-            if @n_to_reset > 2 
-              sin.puts "exit"
-              "Timeout"
-            else
-              :reset_timeout
-            end
+        sin.puts ""
+        @n_to_reset += 1
+        puts "Resetting timeout #{@n_to_reset}"
+        if @n_to_reset > 2 
+          sin.puts "exit"
+          "Timeout"
+        else
+          :reset_timeout
+        end
           end
       ])
     end

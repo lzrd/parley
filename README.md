@@ -1,13 +1,15 @@
-parley
-======
+# Parley
 
-An Expect-like gem for Ruby
+## Introduction
+
+An expect-like module for Ruby modled after Perl's Expect.pm
 
 Parley is an implementation of an expect-like API.  It is designed to
-help port away from Perl Expect based applications.  The name "expect"
-is already well established in ruby.  Those of you who have wrestled
-with the interactive, text-mode, APIs of the world will appreciate the
-meaning of the word:
+help port away from Perl Expect based applications.
+
+The name "expect"
+is already well established in ruby and varients of that name are in use by several gems.
+"parley" was chosen as alternative to yet another expect-varient.
 
 From http://www.thefreedictionary.com/parley "A discussion or conference, especially one between enemies over terms of truce or other matters."
 
@@ -15,116 +17,142 @@ See http://www.nist.gov/el/msid/expect.cfm for references to the original Expect
 
 See http://search.cpan.org/~rgiersig/Expect-1.21/Expect.pod for information on Expect.pm
 
-= Parley 
-An expect-like module for Ruby modled after Perl's Expect.pm
+## Duck Type Compatibility
 
-Parley is a module that can be used with any class, like PTY, IO or
-StringIO that responds_to?() :eof?, and either :read_nonblock(maxread)
-or :getc.
+Parley is a module that can be used with any class, like `PTY`, `IO` or
+`StringIO` that responds to `eof()`, and either `read_nonblock(maxread)`
+or `getc()`.
 
-If the class also responds to :select, then Parley will be able to wait
+If the instance is valid for use with `Kernel.select()`, then Parley will be able to wait
 for additional input to arrive.
 
-== parley method arguments
+## Parley method arguments
 
-The parley() method is called with two arguments:
+The `parley()` method is called with two arguments:
 
-* a timeout in seconds, which may be zero to indicate no timeout
-* an array of arrays, each array contains a pattern and an action.
+* an optional timeout in seconds, which may be 0 to indicate immediate timeout or `nil` to indicate no timeout
+* additional arguments are arrays, each array containing a pattern and an action.
 
-Each pattern is either:
+A call to parley with no arguments should read data until `eof?` and return `:eof`.
 
-* a RegExp to match input data
-* the symbol :timeout to match the timeout condition from select()
-* the symbol :eof to match the eof?() condition
 
-If an action responds_to?(:call), such as a lambda{|m| code}
-then the action is called with MatchData as an argument.
-In the case of :timeout or :eof, MatchData is from matching:
- input_buffer =~ /.*/
+### Each pattern is either:
 
-== Examples of Usage
+* a `RegExp` to match input data
+* the symbol `:timeout` to match the timeout condition from select()
+* the symbol `:eof` to match the eof?() condition
 
-=== Standard ruby expect vs. equivalent parley usage
+If an action `responds_to?(:call)`, such as a `lambda{|m| code}`
+then the action is called with `MatchData` as an argument.
+In the case of `:timeout` or `:eof`, `MatchData` is from `matching:`
+
+    input_buffer =~ /.*/
+
+## Examples of Usage
+
+### Standard ruby expect vs. equivalent parley usage
+
+In their simplest forms, the two are very similar:
+
+* Expect takes a Regexp and an optional timeout
+parameter. The method is either given a block that receives MatchData or it returns `MatchData`.
+
+* Parley takes an optional `Numeric` timeout as the first argument and a variable
+number of arrays, each containing a pattern and an action.
+
 Standard Ruby expect:
-  require 'expect'
 
-  ...
-  input.expect(/pattern/, 10) {|matchdata| code}
+    require 'expect'
+    ...
+    input.expect(/pattern/, 10) {|matchdata| code}  # wait up to 10 seconds
+    input.expect(/pattern/, 0) {|matchdata| code}   # no waiting
+    input.expect(/pattern/) {|matchdata| code}      # wait for a very long time
 
 Parley:
-  require 'parley'
 
-  ...
-  input.parley(10, [[/pattern/, lambda{|matchdata| code}]])
+    require 'parley'
 
-=== Telnet login using /usr/bin/telnet
- require 'parley'
- input, output, process_id = PTY.spawn("/usr/bin/telnet localhost")
- output.puts '' # hit return to make sure we get some output
- result = input.parley(30, [  # allow 30 seconds to login
-   [ /ogin:/, lambda{|m| output.puts 'username'; :continue} ],
-   [ /ssword:/, lambda{|m| output.puts 'my-secret-password'; :continue} ],
-   [ /refused/i, "connection refused" ],
-   [ :timeout, "timed out" ],
-   [ :eof, "command output closed" ],
-   [ /\$/, true ] # some string that only appears in the shell prompt
-   ])
- if result == true
-   puts "Successful login"
-   output.puts "date" # This is the important command we had to run
- else
-   puts "Login failed because: #{result}"
- end
- # We can keep running commands.
- input.close
- output.close
- id, exit_status = Process.wait2(process_id)
+    ...
+    input.extend Parley # needed if input is not a subclass of IO
+    ...
+    input.parley(10, [/pattern/, lambda{|matchdata| code}])   # wait up to 10 seconds
+    input.parley(0, [/pattern/, lambda{|matchdata| code}])    # no waiting
+    input.parley(nil, [/pattern/, lambda{|matchdata| code}])  # wait forever
+    input.parley([/pattern/, lambda{|matchdata| code}])       # wait forever
 
-=== Run your telnet script against canned input
- require 'parley'
- class StringIO
-   include Parley
- end
- input = StringIO.new("login: password: prompt$\n", "r")
- output = StringIO.new("", "w")
- output.puts '' # Note: no effect in this example
- result = input.parley(30, [  # Note: timeout has no effect for StringIO
-   # XXX check these example patterns against need for anchoring with ^ and/or $
-   [ /ogin:/, lambda{|m| output.puts 'username'; :continue} ],
-   [ /ssword:/, lambda{|m| output.puts 'my-secret-password'; :continue} ],
-   [ :timeout, "timed out" ],
-   [ :eof, "command output closed" ],
-   [ /\$/, true ] # some string that only appears in the shell prompt
-   ])
- if result == true
-   puts "Successful login"
-   output.puts "exit"
- else
-   puts "Login failed because: #{result}"
- end
- input.close
- output.close
- id, exit_status = Process.wait2(process_id)
+## Telnet login using /usr/bin/telnet
+See the examples directory for a use of Net::Telnet instead of PTY.spawn(...
 
-=== Handle a timeout condition
- require 'parley'
- read, write, pid = PTY.spawn("ruby -e 'sleep 20'")
- result = read.parley(5, ["timeout, :timeout])
- if result == :timeout
-  puts "Program timed-out as expected"
- else
-  puts "Error, timeout did not happen!"
- end
+    require 'parley'
+    input, output, process_id = PTY.spawn("/usr/bin/telnet localhost")
+    output.puts '' # hit return to make sure we get some output
+    result = input.parley(30, [  # allow 30 seconds to login
+      [ /ogin:/, lambda{|m| output.puts 'username'; :continue} ],
+      [ /ssword:/, lambda{|m| output.puts 'my-secret-password'; :continue} ],
+      [ /refused/i, "connection refused" ],
+      [ :timeout, "timed out" ],
+      [ :eof, "command output closed" ],
+      [ /\$/, true ] # some string that only appears in the shell prompt
+      ])
+    if result == true
+      puts "Successful login"
+      output.puts "date" # This is the important command we had to run
+    else
+      puts "Login failed because: #{result}"
+    end
+    # We can keep running commands.
+    input.close
+    output.close
+    id, exit_status = Process.wait2(process_id)
 
-== Known Issues
+### Run your telnet script against canned input
 
-* :reset_timeout from IO::parley() doesn't have the desired effect, it isn't re-establishing the timeout.
-* need to generatate adequte documentation. See test/test_parley.rb for now
+    require 'parley'
+    class StringIO
+      include Parley  # or use "input.extend Parley"
+    end
+    input = StringIO.new("login: password: prompt$\n", "r")
+    output = StringIO.new("", "w")
+    output.puts '' # Note: no effect in this example
+    result = input.parley(30, [  # Note: timeout has no effect for StringIO
+      # XXX check these example patterns against need for anchoring with ^ and/or $
+      [ /ogin:/, lambda{|m| output.puts 'username'; :continue} ],
+      [ /ssword:/, lambda{|m| output.puts 'my-secret-password'; :continue} ],
+      [ :timeout, "timed out" ],
+      [ :eof, "command output closed" ],
+      [ /\$/, true ] # some string that only appears in the shell prompt
+      ])
+    if result == true
+      puts "Successful login"
+      output.puts "exit"
+    else
+      puts "Login failed because: #{result}"
+    end
+    input.close
+    output.close
+    id, exit_status = Process.wait2(process_id)
+
+### Handle a timeout condition
+
+    require 'parley'
+    read, write, pid = PTY.spawn("ruby -e 'sleep 20'")
+    result = read.parley(5, ["timeout, :timeout])
+    if result == :timeout
+      puts "Program timed-out as expected"
+    else
+      puts "Error, timeout did not happen!"
+    end
+
+## Known Issues
+
+* *FIXED!* `:reset_timeout` from IO::parley() doesn't have the desired effect, it isn't re-establishing the timeout.
+* *FIXED!* need to generatate adequte documentation. See `test/test_parley.rb` for now
 * line oriented reading option
-* Finer grain greediness control beyond read_nonblock(maxlen)
+* Finer grain greediness control beyond `read_nonblock(maxlen)`
 
-== Contributing to parley
+## Contributing to parley
+--
+
 * Check out the latest master to make sure the feature hasn't been implemented or the bug hasn't been fixed yet.
 * Check out the issue tracker to make sure someone already hasn't requested it and/or contributed it.
 * Fork the project.
@@ -133,7 +161,7 @@ Parley:
 * Make sure to add tests for it. This is important so I don't break it in a future version unintentionally.
 * Please try not to mess with the Rakefile, version, or history. If you want to have your own version, or is otherwise necessary, that is fine, but please isolate to its own commit so I can cherry-pick around it.
 
-== Copyright
+## Copyright
 
-Copyright (c) 2013 Ben Stoltz.
+Copyright &copy; 2013 Ben Stoltz.
 See LICENSE.txt for further details.
